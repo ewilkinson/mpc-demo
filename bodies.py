@@ -83,6 +83,8 @@ class AbstractBody(object):
         self.nonlinear_mode = False
         self.integration_type = self.EULER
 
+        self.cons = ()
+
     def _degree_to_rad(self, degree):
         return degree * np.pi / 180.0
 
@@ -111,6 +113,23 @@ class AbstractBody(object):
         """
         return Param.list_to_matrix(self.state)
 
+    def integrate(self, X, dt, u=0):
+        # Euler
+        if self.integration_type == self.EULER:
+            X_prime = self.A * X + self.B * u
+
+        # Runge-Kutta
+        elif self.integration_type == self.RUNGE_KUTTA:
+            X_k1 = self.A * X + self.B * u
+            X_k2 = self.A * (X + dt / 2 * X_k1) + self.B * u
+            X_k3 = self.A * (X + dt / 2 * X_k2) + self.B * u
+            X_k4 = self.A * (X + dt * X_k3) + self.B * u
+
+            X_prime = 1 / 6.0 * (X_k1 + 2 * X_k2 + 2 * X_k3 + X_k4)
+        else:
+            raise ValueError('Integration Type Not Recognized : %s' % self.integration_type)
+
+        return X + X_prime * dt, X_prime
 
 
 class SpringDamper(AbstractBody):
@@ -127,6 +146,10 @@ class SpringDamper(AbstractBody):
         self.poly_radius = 10
         self.renderables = self._create_renderables()
 
+        self.cons = ({'type': 'ineq',
+                      'fun': lambda x: np.array([-abs(x[1]) + 3]),  # max pendulum torque
+                      'jac': lambda x: np.array([0.0, -1.0]) if x[1] > 0 else np.array([0.0, 1.0])})
+
     def set_properties(self, k, m, c, x0):
         self.k = k
         self.m = m
@@ -135,7 +158,7 @@ class SpringDamper(AbstractBody):
 
         self.A = np.matrix([[0, 1], [-self.k / self.m * (1 - self.x0 / (self.pos_x + 1e-5)), -self.c / self.m]])
         self.B = np.matrix([0, 1 / self.m])
-        self.u = 0
+        self.u = np.matrix(np.zeros(shape=(self.B.shape[1], 1)))
 
     def _create_renderables(self):
         self.polygon = sf.CircleShape(self.poly_radius)
@@ -153,28 +176,11 @@ class SpringDamper(AbstractBody):
         self.pos_x_d.value = pos_x_d
         self.pos_y_d.value = pos_y_d
 
-    def simulate(self, dt):
-        X = self.get_state()
-
+    def simulate(self, dt, u=0):
         x1 = self.state[0].value
         self.A[1, 0] = -self.k / self.m * (1 - self.x0 / (x1 + 1e-7))
 
-        # Euler
-        if self.integration_type == self.EULER:
-            X_prime = self.A * X + self.B * self.u
-
-        # Runge-Kutta
-        elif self.integration_type == self.RUNGE_KUTTA:
-            X_k1 = self.A * X + self.B * self.u
-            X_k2 = self.A * (X + dt/2 * X_k1) + self.B * self.u
-            X_k3 = self.A * (X + dt/2 * X_k2) + self.B * self.u
-            X_k4 = self.A * (X + dt * X_k1) + self.B * self.u
-
-            X_prime = 1 / 6.0 * (X_k1 + 2* X_k2 + 2* X_k3 + X_k4)
-        else:
-            raise ValueError('Integration Type Not Recognized : %s' % self.integration_type)
-
-        X = X + X_prime*dt
+        X, X_prime = self.integrate(self.get_state(), dt, u)
 
         self.set_position(X[0,0], self.pos_y.value)
         self.set_velocity(X[1,0], self.pos_x_d.value)
@@ -191,8 +197,8 @@ class Pendulum(AbstractBody):
         self.circle_radius = 20
 
         self.cons = ({'type': 'ineq',
-         'fun' : lambda x: np.array([-x[1] + 2]), # max pendulum torque is 10
-         'jac' : lambda x: np.array([0.0, -1.0])})
+                      'fun': lambda x: np.array([-abs(x[1]) + 10]),  # max pendulum torque
+                      'jac': lambda x: np.array([0.0, -1.0]) if x[1] > 0 else np.array([0.0, 1.0])})
 
     def set_properties(self, m, g, L, k):
         """
@@ -209,8 +215,10 @@ class Pendulum(AbstractBody):
         self.A = np.matrix([[0,                            1],
                             [0, - self.k / (self.m * self.L)]])
 
-        self.B = np.matrix([0, 1.0 / (self.m * self.L)])
-        self.u = 0
+        self.B = np.matrix(np.zeros(shape=(2, 2)))
+        self.B[1, 1] = 1.0 / (self.m * self.L)
+
+        self.u = np.matrix(np.zeros(shape=(self.B.shape[1], 1)))
 
         self.renderables = self._create_renderables()
 
@@ -242,8 +250,7 @@ class Pendulum(AbstractBody):
     def set_velocity(self, theta_d):
         self.theta_d.value = theta_d
 
-    def simulate(self, dt):
-        X = self.get_state()
+    def simulate(self, dt, u=0):
 
         if self.nonlinear_mode:
             x1 = self.state[0].value
@@ -251,22 +258,7 @@ class Pendulum(AbstractBody):
         else:
             self.A[1,0] = self.g/self.L
 
-        # Euler
-        if self.integration_type == self.EULER:
-            X_prime = self.A * X + self.B * self.u
-
-        # Runge-Kutta
-        elif self.integration_type == self.RUNGE_KUTTA:
-            X_k1 = self.A * X + self.B * self.u
-            X_k2 = self.A * (X + dt/2 * X_k1) + self.B * self.u
-            X_k3 = self.A * (X + dt/2 * X_k2) + self.B * self.u
-            X_k4 = self.A * (X + dt * X_k1) + self.B * self.u
-
-            X_prime = 1 / 6.0 * (X_k1 + 2* X_k2 + 2* X_k3 + X_k4)
-        else:
-            raise ValueError('Integration Type Not Recognized : %s' % self.integration_type)
-
-        X = X + X_prime*dt
+        X, X_prime = self.integrate(self.get_state(), dt, u)
 
         self.set_rotation(theta=X[0,0])
         self.set_velocity(theta_d=X[1,0])
@@ -286,6 +278,8 @@ class CartPole(AbstractBody):
         self.state = [self.pos_x, self.pos_x_d, self.theta, self.theta_d]
 
         self.circle_radius = 20
+
+        self.cons = ()
 
     def set_properties(self, m, M, I, g, l, b):
         """
@@ -313,12 +307,11 @@ class CartPole(AbstractBody):
                             [0,                 0,                   0,      1],
                             [0,        -(m*l*b)/p,       m*g*l*(M+m)/p,      0]])
 
-        self.B = np.matrix([[0],
-                            [(I+m*l**2)/p],
-                            [0],
-                            [ m*l/p]])
+        self.B = np.matrix(np.zeros(shape=(4, 4)))
+        self.B[1, 1] = (I + m * l ** 2) / p
+        self.B[3, 3] = m * l / p
 
-        self.u = 0
+        self.u = np.matrix(np.zeros(shape=(self.B.shape[1], 1)))
 
         self.renderables = self._create_renderables()
 
@@ -350,30 +343,13 @@ class CartPole(AbstractBody):
     def set_velocity(self, pos_x_d, pos_y_d):
         self.pos_x_d.value = pos_x_d
 
-    def simulate(self, dt):
-        X = self.get_state()
-
+    def simulate(self, dt, u=0):
         if self.nonlinear_mode:
             theta = self.state[2].value
             self.A[3, 2] = self.m*self.g*self.l*(self.M+self.m)/self.p *  np.sin(theta) / (theta + 1e-7)
             self.A[1, 2] = (self.m**2* self.g*self.l**2)/ self.p * np.sin(theta) / (theta + 1e-7)
 
-        # Euler
-        if self.integration_type == self.EULER:
-            X_prime = self.A * X + self.B * self.u
-
-        # Runge-Kutta
-        elif self.integration_type == self.RUNGE_KUTTA:
-            X_k1 = self.A * X + self.B * self.u
-            X_k2 = self.A * (X + dt/2 * X_k1) + self.B * self.u
-            X_k3 = self.A * (X + dt/2 * X_k2) + self.B * self.u
-            X_k4 = self.A * (X + dt * X_k1) + self.B * self.u
-
-            X_prime = 1 / 6.0 * (X_k1 + 2* X_k2 + 2* X_k3 + X_k4)
-        else:
-            raise ValueError('Integration Type Not Recognized : %s' % self.integration_type)
-
-        X = X + X_prime*dt
+        X, X_prime = self.integrate(self.get_state(), dt, u)
 
         for i, s in enumerate(self.state):
             s.value = X[i, 0]
