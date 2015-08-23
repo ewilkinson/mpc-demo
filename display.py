@@ -24,6 +24,7 @@ def add_time(window, time):
 
 class System(object):
     def __init__(self, window, dt=0.01):
+        self.use_mpc = True
         self.clock = sf.Clock()
         self.window = window
         self.dt = dt
@@ -53,13 +54,15 @@ class System(object):
         self.mpc = MPC(dt, self.mpc_horizon)
 
         # This works for springdamper and pendulum
-        R = np.matrix(np.eye(2) * 0.0)
-        Q = np.matrix(np.matrix([[100, 0], [0.0, 0.0]]))
-        self.mpc.set_cost_weights(Q, R)
+        R = np.matrix(np.eye(2) * 1e-5)
+        Q = np.matrix(np.matrix([[100, 0], [0.0, 1.0]]))
+        T = np.matrix(np.eye(2) * 1e-5)
+        self.mpc.set_cost_weights(Q, R, T)
 
         self.mpc.Y_prime = np.matrix(np.zeros(shape=(2, self.mpc_horizon)))
-        self.mpc.Y_prime[0, :] = np.pi  # 0.4
-        self.C = np.matrix(np.eye(2))
+        self.mpc.Y_prime[0, :] = 0.7
+        self.mpc.C = np.matrix(np.eye(2))
+
 
         # cartpole
         # R = np.matrix(np.eye(4)*0.001)
@@ -78,21 +81,24 @@ class System(object):
 
 
         # self.bodies = [spring_damper, pendulum]
-        self.bodies = [pendulum]
+        self.bodies = [spring_damper]
 
         self.mpc.set_body(self.bodies[0])
-        self.mpc.C = self.C  # for now
 
     def simulate(self):
         self.counter += 1
 
-        for body in self.bodies:
+        if self.use_mpc:
             if self.counter % self.mpc_horizon == 0:
                 self.counter = 0
                 self.mpc.calc_control()
 
             u = self.mpc.U[:, self.counter]
-            body.simulate(self.dt, np.matrix(u).transpose())
+            self.mpc.body.simulate(self.dt, np.matrix(u).transpose())
+
+        else:
+            for body in self.bodies:
+                body.simulate(self.dt)
 
     def render(self):
         self.window.clear(sf.Color.WHITE)

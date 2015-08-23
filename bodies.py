@@ -71,8 +71,10 @@ class AbstractBody(object):
 
     def __init__(self, window):
         self.window = window
-        self.window_x = window.size[0]
-        self.window_y = window.size[1]
+
+        if window is not None:
+            self.window_x = window.size[0]
+            self.window_y = window.size[1]
 
         self.EULER = AbstractBody.EULER
         self.RUNGE_KUTTA = AbstractBody.RUNGE_KUTTA
@@ -113,6 +115,10 @@ class AbstractBody(object):
         """
         return Param.list_to_matrix(self.state)
 
+    def set_state(self, X):
+        for i in range(X.shape[0]):
+            self.state[i].value = X[i, 0]
+
     def integrate(self, X, dt, u=0):
         # Euler
         if self.integration_type == self.EULER:
@@ -131,6 +137,11 @@ class AbstractBody(object):
 
         return X + X_prime * dt, X_prime
 
+    def add_max_value_constraint(self, indx, value):
+        self.cons += ({'type': 'ineq',
+                      'fun': lambda x: np.array([-abs(x[indx]) + value]),  # max pendulum torque
+                      'jac': lambda x: np.array([0.0, -1.0]) if x[1] > 0 else np.array([0.0, 1.0])},)
+
 
 class SpringDamper(AbstractBody):
     def __init__(self, window, pos_x=0.0, pos_y=0.0):
@@ -144,11 +155,11 @@ class SpringDamper(AbstractBody):
         self.state = [self.pos_x, self.pos_x_d]
 
         self.poly_radius = 10
-        self.renderables = self._create_renderables()
 
-        self.cons = ({'type': 'ineq',
-                      'fun': lambda x: np.array([-abs(x[1]) + 3]),  # max pendulum torque
-                      'jac': lambda x: np.array([0.0, -1.0]) if x[1] > 0 else np.array([0.0, 1.0])})
+        if window is not None:
+            self.renderables = self._create_renderables()
+
+        self.add_max_value_constraint(1, 20)
 
     def set_properties(self, k, m, c, x0):
         self.k = k
@@ -157,7 +168,10 @@ class SpringDamper(AbstractBody):
         self.x0 = x0
 
         self.A = np.matrix([[0, 1], [-self.k / self.m * (1 - self.x0 / (self.pos_x + 1e-5)), -self.c / self.m]])
-        self.B = np.matrix([0, 1 / self.m])
+
+        self.B = np.matrix(np.zeros(shape=(2, 2)))
+        self.B[1, 1] =1 / self.m
+
         self.u = np.matrix(np.zeros(shape=(self.B.shape[1], 1)))
 
     def _create_renderables(self):
@@ -168,13 +182,7 @@ class SpringDamper(AbstractBody):
         return [self.polygon]
 
     def set_position(self, pos_x, pos_y):
-        self.pos_x.value = pos_x * 1.
-        self.pos_y.value = pos_y * 1.
         super(SpringDamper, self).set_position(pos_x, pos_y)
-
-    def set_velocity(self, pos_x_d, pos_y_d):
-        self.pos_x_d.value = pos_x_d
-        self.pos_y_d.value = pos_y_d
 
     def simulate(self, dt, u=0):
         x1 = self.state[0].value
@@ -183,7 +191,13 @@ class SpringDamper(AbstractBody):
         X, X_prime = self.integrate(self.get_state(), dt, u)
 
         self.set_position(X[0,0], self.pos_y.value)
-        self.set_velocity(X[1,0], self.pos_x_d.value)
+        self.set_state(X)
+
+    def set_state(self, X):
+        super(SpringDamper, self).set_state(X)
+
+        x1 = self.state[0].value
+        self.A[1, 0] = -self.k / self.m * (1 - self.x0 / (x1 + 1e-7))
 
 
 class Pendulum(AbstractBody):
@@ -220,7 +234,8 @@ class Pendulum(AbstractBody):
 
         self.u = np.matrix(np.zeros(shape=(self.B.shape[1], 1)))
 
-        self.renderables = self._create_renderables()
+        if self.window is not None:
+            self.renderables = self._create_renderables()
 
     def _create_renderables(self):
         size_x = int(self.L * self.window_x)
@@ -313,7 +328,8 @@ class CartPole(AbstractBody):
 
         self.u = np.matrix(np.zeros(shape=(self.B.shape[1], 1)))
 
-        self.renderables = self._create_renderables()
+        if self.window is not None:
+            self.renderables = self._create_renderables()
 
     def _create_renderables(self):
         size_x = int(self.l * self.window_x)
