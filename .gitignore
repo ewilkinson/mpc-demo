@@ -55,3 +55,7 @@ docs/_build/
 
 # PyBuilder
 target/
+.idea/.name
+.idea/misc.xml
+*.xml
+.idea/mpc-demo.iml

@@ -87,6 +87,9 @@ class AbstractBody(object):
 
         self.cons = ()
 
+        self.A = None
+        self.B = None
+
     def _degree_to_rad(self, degree):
         return degree * np.pi / 180.0
 
@@ -138,9 +141,21 @@ class AbstractBody(object):
         return X + X_prime * dt, X_prime
 
     def add_max_value_constraint(self, indx, value):
+        jac = self.max_value_jac(indx)
         self.cons += ({'type': 'ineq',
-                      'fun': lambda x: np.array([-abs(x[indx]) + value]),  # max pendulum torque
-                      'jac': lambda x: np.array([0.0, -1.0]) if x[1] > 0 else np.array([0.0, 1.0])},)
+                      'fun': lambda x: -np.abs(x[indx]) + value,
+                      'jac': lambda x: jac(x)}, )
+
+    @staticmethod
+    def max_value_jac(indx):
+        def jacfn(x):
+            jac = np.zeros(x.shape)
+
+            if x[indx] > 0:
+                jac[indx] = -np.sign(x[indx])*1.0
+
+            return jac
+        return jacfn
 
 
 class SpringDamper(AbstractBody):
@@ -159,7 +174,12 @@ class SpringDamper(AbstractBody):
         if window is not None:
             self.renderables = self._create_renderables()
 
-        self.add_max_value_constraint(1, 20)
+        self.add_max_value_constraint(3, 20)
+        self.add_max_value_constraint(4, 20)
+        self.add_max_value_constraint(5, 20)
+        # self.cons = ({'type': 'ineq',
+        #               'fun': lambda x: np.array([-abs(x[1]) + 20]),  # max pendulum torque
+        #               'jac': lambda x: np.array([0.0, -1.0]) if x[1] > 0 else np.array([0.0, 1.0])})
 
     def set_properties(self, k, m, c, x0):
         self.k = k

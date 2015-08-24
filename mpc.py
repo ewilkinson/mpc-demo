@@ -13,24 +13,35 @@ class MPC(object):
         self.Y = None  # predicted path
         self.Y_prime = None  # reference path
 
+        self.Xs = None  # state space for optimization
+
+        self.C = None
+
         self.horizon = horizon
         self.dt = dt
 
     def cost_fn(self, u):
-        u = np.matrix(u).transpose()
-        X = np.copy(self.X_iter)
+        cost_fn_u = np.matrix(u.reshape(self.U.shape))
 
         sum_cost = 0
-        for i in range(2):
-            temp_u = (np.matrix(np.zeros(u.shape)), u)[i == 0]  # if / else statement
-            X, X_prime = self.body.integrate(X, self.dt, temp_u)
+        for i in range(self.horizon):
+            tmp_u = cost_fn_u[:, i]
+
+            X, X_prime = self.body.integrate(self.Xs[:, i], self.dt, tmp_u)
+            self.Xs[:, i+1] = X
 
             # for debug so I can check each variable separately
-            DY = self.y_prime - self.C * X
-            DU = self.u - u
+            DY = self.Y_prime[:, i] - self.C * X
+
             a = DY.transpose() * self.Q * DY
-            b = u.transpose() * self.R * u
+            b = tmp_u.transpose() * self.R * tmp_u
+
+            if i == 0:
+                DU = tmp_u - self.last_u
+            else:
+                DU = tmp_u - cost_fn_u[:, i-1]
             d = DU.transpose() * self.T * DU
+
             c = np.sum(a + b + d)
             sum_cost += c
 
@@ -44,10 +55,12 @@ class MPC(object):
 
         self.body = body
 
-        self.u = np.matrix(np.zeros(shape=(body.B.shape[1], 1)))
+        self.last_u = np.matrix(np.zeros(shape=(body.B.shape[1], 1)))
 
-        self.U = np.zeros(shape=(self.u.shape[0], self.horizon))
+        self.U = np.zeros(shape=(body.B.shape[1], self.horizon))
         self.Y = np.zeros(shape=(body.A.shape[1], self.horizon))
+
+        self.Xs = np.matrix(np.zeros(shape=(body.A.shape[1], self.horizon + 1)))
 
     def set_cost_weights(self, Q, R, T=None):
         """
@@ -68,16 +81,14 @@ class MPC(object):
         self.T = T
 
     def calc_control(self):
-        self.X_iter = np.copy(self.body.get_state())
-        self.U_iter = np.copy(self.U[:, -1])
+        self.Xs[:, 0] = np.copy(self.body.get_state())
 
-        for i in range(self.horizon):
-            self.y_prime = self.Y_prime[:, i]
-            solution = minimize(self.cost_fn, self.u, constraints=self.body.cons, method='SLSQP', options={'eps': 1e-8})
-            u = np.matrix(solution['x']).transpose()
+        solution = minimize(self.cost_fn,
+                            x0=np.ravel(self.U),
+                            constraints=self.body.cons,
+                            method='SLSQP',
+                            options={'eps': 1e-5})
 
-            self.X_iter, X_prime = self.body.integrate(self.X_iter, self.dt, u)
+        self.U = np.matrix(solution['x'].reshape(self.U.shape))
 
-            self.Y[:, i] = np.ravel(self.X_iter)
-            self.U[:, i] = np.ravel(u)
-            self.u = u
+        self.last_u = self.U[:, -1]
